@@ -32,5 +32,18 @@ function(input, output, session){
     fig <- ggplotly(fig)
     fig
   })
+  
+  canvas_plt <- eventReactive(input$load_canvas, {
+    df <- data() %>% filter(data_type %in% input$dat_2) %>% filter(state %in% state.name)
+    fig <- ggplot(df, aes(x = date, y = value, color = data_type)) + 
+      geom_line() + theme_bw() + geom_point() + scale_color_nejm() +  
+      labs(x = "Date", y = "Cumulative Deaths", color = "Data Types", 
+           title = "Cumulative deaths by date and data source") + facet_wrap(~state, scales = "free_y", ncol = 5)
+    fig
+  })
+  
+  output$canvas_plot <- renderPlot({
+    canvas_plt()
+  })
 }
 

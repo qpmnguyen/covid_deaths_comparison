@@ -1,5 +1,6 @@
 library(tidyverse)
 library(lubridate)
+library(RSocrata)
 
 data_streams <- list("CTP Total" = "Deaths CTP", "Johns Hopkins" = "Deaths JHU", 
                      "CTP Confirmed" = "Deaths (confirmed) CTP", 
@@ -21,8 +22,11 @@ process_weird_dates <- function(date){
 load_data <- function(type = c("nchs", "nyt", "jhu", "ctp")){
   type <- match.arg(type)
   if (type == "nchs"){
-    df <- as_tibble(read.csv("https://data.cdc.gov/resource/r8kw-7aab.csv"))
-    #https://www.cdc.gov/nchs/covid19/covid-19-mortality-data-files.html
+    access <- readRDS(file = "store.rds")
+    df <- read.socrata(
+      "https://data.cdc.gov/resource/r8kw-7aab.json", app_token = access$app_token, 
+        password = access$password, email = access$email,
+    )
     df$end_week <- as_date(strptime(df$end_week, format = "%Y-%m-%d", tz = "UTC"))
     df <- df %>% select(end_week, state, covid_deaths) %>% filter(state != "United States") %>% 
       rename("date" = "end_week") %>% group_by(state) %>% 
