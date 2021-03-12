@@ -5,9 +5,9 @@ account: qpmnguyen
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 3375071
-bundleId: 4324302
+bundleId: 4336767
 url: https://qpmnguyen.shinyapps.io/covid_death_comparison/
-when: 1615352866.2261
+when: 1615570898.39251
 asMultiple: FALSE
 asStatic: FALSE
 ignoredFiles: .Rprofile

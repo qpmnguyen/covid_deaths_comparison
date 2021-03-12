@@ -2,7 +2,8 @@ library(tidyverse)
 library(RSocrata)
 library(lubridate)
 library(plotly)
-
+library(gt)
+source("R/airtable.R")
 data_loader_ui <- function(id, label = "Loading Data"){
   ns <- NS(id)
   tagList(
@@ -14,7 +15,11 @@ data_loader_ui <- function(id, label = "Loading Data"){
         actionButton(ns("load"), "Load Data")
       ), 
       mainPanel(
-        plotlyOutput(ns("main_plot"))
+        tabsetPanel(type = "tabs",
+                    tabPanel("Plot", plotlyOutput(ns("main_plot"))),
+                    tabPanel("Annotation", gt_output(ns("annotation")))
+        )
+        
       )
     )
   )
@@ -43,7 +48,36 @@ data_loader_server <- function(id){
           "new_deaths"
         }
       })
-      
+      states <- data.frame(abb = c(state.abb, "DC"), name = c(state.name, "Washington DC"))
+      annotations <- retr_airtable() %>%  inner_join(states, by = "abb") %>% 
+        select(c(name, metric, annotation, evidence))
+
+      table <- reactive({
+        annotations %>% filter(name == input$state) %>% 
+          rename(c("State" = "name", "Metric" = "metric", "Annotation" = "annotation", 
+                 "Evidence" = "evidence")) %>%
+          gt(rowname_col = "Metric", groupname_col = "State") %>%
+          cols_align(
+            align = "right"
+          ) %>% 
+          cols_width(
+            gt::vars(Evidence) ~ gt::pct(80)
+          ) %>% 
+          tab_style(
+            style = list(
+              cell_borders(
+                sides = "left", 
+                color = "black"
+              )
+            ),
+            locations = list(
+              cells_body(
+                columns = everything()
+              )
+            )
+          )
+          
+      }) 
       df <- reactive({
         dat() %>% 
           pivot_longer(ends_with(filt_string()), names_to = "data_sets", values_to = "deaths") %>%
@@ -52,9 +86,7 @@ data_loader_server <- function(id){
           mutate(data_sets = str_to_upper(data_sets)) %>% 
           filter(name == input$state) %>% filter(!is.na(deaths))
       })
-      output$main_Table <- renderTable({
-        head(df())
-      })
+      
       output$main_plot <- renderPlotly({
           fig <- ggplot(df(), aes(x = date, y = deaths, col = data_sets)) + 
             geom_line(size = 1.5, alpha = 0.8) + theme_bw() + 
@@ -68,6 +100,7 @@ data_loader_server <- function(id){
           fig <- ggplotly(fig)
           fig
       })
+      output$annotation <- render_gt(table())
     }  
   )
 }
@@ -97,7 +130,8 @@ nchs <- function(states, cutoff_month){
     mutate(nchs_new_deaths = as.numeric(nchs_new_deaths)) %>% 
     group_by(name) %>% mutate(nchs_tot_deaths = cumsum(replace_na(nchs_new_deaths,0))) %>%
     arrange(name,date) %>% 
-    filter(month(date) >= cutoff_month & year(date) == 2020) %>% 
+    filter(date >= "2020-03-01") %>%
+    filter(date <= "2021-03-07") %>%
     inner_join(states, by = "name")
   return(df)
 }
@@ -114,7 +148,8 @@ cdc <- function(states, cutoff_month){
     mutate(tot_death = as.numeric(tot_death), new_death = as.numeric(new_death), 
            date = as_date(date)) %>% 
     rename("cdc_new_deaths" = "new_death", "cdc_tot_deaths" = "tot_death") %>% 
-    arrange(name, date) %>% filter(month(date) >= cutoff_month & year(date) == 2020)
+    arrange(name, date) %>% filter(month(date) >= cutoff_month & year(date) == 2020) %>%
+    filter(date <= "2021-03-07")
   return(df)
 }
 
@@ -126,25 +161,8 @@ ctp <- function(states, cutoff_month){
     rename(c("ctp_tot_deaths" = "death", "ctp_tot_confirmed" = "deathConfirmed", 
              "ctp_tot_probable" = "deathProbable", "abb" = "state", "ctp_new_deaths" = "deathIncrease")) %>%
     inner_join(states, by = "abb") %>% 
-    arrange(name,date) %>% filter(month(date) >= cutoff_month & year(date) == 2020)
+    arrange(name,date) %>% filter(date >= "2020-03-01") %>% 
+    filter(date <= "2021-03-07")
   return(df)
 }
-# load_data <- function(type = c("nchs", "nyt", "jhu", "ctp")){
-#   type <- match.arg(type)
-#   if (type == "nyt"){
-#     df <- as_tibble(read.csv("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv"))
-#     df <- df %>% mutate(date = as_date(strptime(date, "%Y-%m-%d", tz = "UTC"))) %>% 
-#       rename("Deaths NYT" = "deaths") %>% 
-#       select(c(date, state, `Deaths NYT`))
-#   } else if (type == "jhu"){
-#     df <- as_tibble(read.csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"))
-#     df <- df %>% select(c(Province_State, Admin2, starts_with("X"))) %>% 
-#       pivot_longer(starts_with("X"))
-#     df$date <- sapply(df$name, process_weird_dates)
-#     df <- df %>% mutate(date = as_date(strptime(date, "%m-%d-%y", tz = "UTC"))) %>% 
-#       dplyr::group_by(Province_State, date) %>% dplyr::summarise(deaths = sum(value)) %>%
-#       rename(c("state" = "Province_State", "Deaths JHU" = "deaths")) %>% select(date, state, `Deaths JHU`)
-#   }
-#   return(df)
-#   
-# }
+
