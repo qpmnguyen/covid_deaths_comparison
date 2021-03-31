@@ -1,0 +1,18 @@
+---
+title: "Data Comparison Plots by State"
+author: "Quang Nguyen"
+date: "`r Sys.Date()`"
+output:
+  pagedown::html_paged:
+    toc: true
+    # change to true for a self-contained document, but it'll be a litte slower for Pandoc to render
+    self_contained: false
+# uncomment this line to produce HTML and PDF in RStudio:
+knit: pagedown::chrome_print
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Example text here 

@@ -7,7 +7,13 @@ navbarPage("Comparing death trajectories across different data sets",
       titlePanel("Viewing interactive plots per state"),
       h5("This is an interactive comparison of fatality counts from the National Center of Heatlh Statistics, The CDC Data Tracker, 
          and The COVID Tracking Project"),
-      data_loader_ui("state_data")
+      per_state_view_ui("state_data")
+    )
+  ), 
+  tabPanel("National View", 
+    fluidPage(
+      titlePanel("Viewing interactive plots nationally"),
+      national_view_ui("national_data")
     )
   )
   # tabPanel("Canvas View",

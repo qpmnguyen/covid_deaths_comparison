@@ -3,12 +3,13 @@ library(tidyverse)
 library(ggsci)
 library(glue)
 #dir.create("~/.fonts")
-#file.copy("www/SF-Pro-Text-Regular.otf", "~/.fonts")
+#file.copy("www/SF-Pro-Text.ttf", "~/.fonts")
 #system("fc-cache -f ~/.fonts")
 
 
 function(input, output, session){
-  data_loader_server("state_data")
+  per_state_view_server("state_data")
+  national_view_server("national_data")
   
   # canvas_plt <- eventReactive(input$load_canvas, {
   #   df <- data() %>% filter(data_type %in% input$dat_2) %>% filter(state %in% state.name)
