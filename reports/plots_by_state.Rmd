@@ -3,16 +3,114 @@ title: "Data Comparison Plots by State"
 author: "Quang Nguyen"
 date: "`r Sys.Date()`"
 output:
+  #pagedreport::paged_grid:
   pagedown::html_paged:
     toc: true
-    # change to true for a self-contained document, but it'll be a litte slower for Pandoc to render
-    self_contained: false
+    css:
+      - report_fonts.css
+      - report_page.css
+      - default
 # uncomment this line to produce HTML and PDF in RStudio:
 knit: pagedown::chrome_print
+toc-title: "Table of Contents"
+#main-color: "#575aad"
+#secondary-color: "#ffad4a"
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(showtext)
+library(ggsci)
+library(patchwork)
+library(tidyverse)
+library(lubridate)
+library(zoo)
+source("../R/data_loader_support.R")
+source("../R/airtable.R")
+source("../R/utils.R")
+#font_add_google("Roboto", "roboto")
+showtext_auto()
 ```
 
-# Example text here 
+# Comparing CDC, NCHS, and CTP data State-by-State by March 7 2021 {-}
+
+```{r, echo=FALSE, message=FALSE, cache=TRUE}
+
+types <- c("ctp", "nchs", "cdc", "cdc_cases", "nchs_old")
+df_list <- vector(mode = "list", length = length(types))
+for (i in 1:length(types)){
+  df_list[[i]] <- load_data(type = types[i])
+}
+
+df_list <- df_list %>% reduce(full_join, by = c("abb", "date", "name"))
+```
+
+
+```{r, echo = FALSE, messages=FALSE, results="asis", fig.width = 9, fig.height = 5, fig.align='center', cache=TRUE, fig.fullwidth = TRUE, dpi = 96}
+
+plot_state <- function(df_list, state){
+  filt_string <- c("tot_deaths", "new_deaths")
+  plot_list <- vector(mode = "list", length = length(filt_string))
+  for (j in seq_along(filt_string)){
+    if (filt_string[j] == "new_deaths"){
+      df <- df_list %>% mutate(week = week(date), year = year(date)) %>% group_by(week,year) %>%
+        mutate(date = max(date)) %>% group_by(date, name, abb) %>% 
+        summarise(across(ends_with(filt_string[j]), sum, na.rm = TRUE)) %>% group_by(name, abb) %>% 
+        mutate(across(ends_with(filt_string[j]), ~zoo::rollmean(.x, k = 7, fill = NA))) %>% 
+        pivot_longer(ends_with(filt_string[j]), names_to = "data_sets", values_to = "deaths") 
+      
+    } else{
+      df <- df_list %>% 
+        pivot_longer(ends_with(filt_string[j]), names_to = "data_sets", values_to = "deaths")
+    }
+    
+    df <- df %>% select(date, abb, name, data_sets, deaths) %>% 
+        mutate(data_sets = str_remove(data_sets, paste0("_", filt_string[j]))) %>% 
+        mutate(data_sets = str_to_upper(data_sets)) %>% 
+        filter(name == state) %>% filter(!is.na(deaths)) %>% filter(!data_sets %in% c("NCHS_2020_10_02", 
+                                                                                       "NCHS_2020_10_30",
+                                                                                       "NCHS_2020_12_28"))
+    
+    ylab <- ifelse(filt_string[j] == "tot_deaths", 
+                   "Cumulative Deaths by Week", "7-day average weekly new Deaths")
+    plot_list[[j]] <- ggplot(df, aes(x = date, y = deaths, col = data_sets)) + 
+                        geom_line(size = 1) + 
+                        theme_peter(base_size = 15, base_family = "roboto") + 
+                        scale_color_d3() + 
+                        labs(y = ylab, x = "Week Ending Date", col = "Data Sets")
+  }
+  
+  combo_plot <- plot_list[[1]] + plot_list[[2]] + plot_layout(guides = "collect") + 
+    plot_annotation(caption = "Source: CDC, NCHS and The COVID Tracking Project")
+  return(combo_plot)
+}
+
+states <- unique(df_list$name)
+for (i in seq_along(states)){
+  cat("  \n##",  "New Deaths and Cumulative Deaths in ", states[i], "{-} \n")
+  plot_state(df_list, state = states[i]) %>% print()
+  cat("\n")
+}
+
+
+
+
+```
+
+# Comparing different NCHS revisions State-by-State as of March 7th 2021 {-}  
+
+```{r}
+#todo: do this please Quang
+
+
+df <- df_list %>% select(date, abb, name, starts_with("nchs")) %>%  
+  select(date, abb, name, ends_with("tot_deaths")) %>%
+  pivot_longer(ends_with("tot_deaths"), names_to = "data_sets", values_to = "deaths")
+
+df <- df %>% filter(name == "Alabama")
+
+ggplot(df, aes(x = date, y = deaths, col = data_sets)) + geom_line()
+```
+
+
+

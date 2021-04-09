@@ -22,7 +22,7 @@ process_weird_dates <- function(date){
   return(date)
 }
 
-theme_peter <- function(base_size = 11, base_family = "SF Pro Text"){
+theme_peter <- function(base_size = 11, base_family = "roboto"){
   theme_bw(base_size = base_size, base_family = base_family) %+replace% 
   theme(panel.grid.major.x = element_blank(), 
         panel.grid.minor.x = element_blank(), 
