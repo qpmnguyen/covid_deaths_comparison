@@ -27,9 +27,9 @@ nchs <- function(states, cutoff_month){
     mutate(nchs_new_deaths = as.numeric(nchs_new_deaths)) %>% 
     group_by(name) %>% mutate(nchs_tot_deaths = cumsum(replace_na(nchs_new_deaths,0))) %>%
     arrange(name,date) %>% 
-    filter(date >= "2020-03-07") %>%
+    filter(date >= "2020-02-01") %>%
     filter(date <= "2021-03-07") %>%
-    inner_join(states, by = "name")
+    inner_join(states, by = "name") %>% ungroup()
   return(df)
 }
 
@@ -46,7 +46,7 @@ cdc <- function(states, cutoff_month){
            date = as_date(date)) %>% 
     rename("cdc_new_deaths" = "new_death", "cdc_tot_deaths" = "tot_death") %>% 
     arrange(name, date) %>% 
-    filter(date >= "2020-03-07") %>%
+    filter(date >= "2020-02-01") %>%
     filter(date <= "2021-03-07")
   return(df)
 }
@@ -60,7 +60,7 @@ ctp <- function(states, cutoff_month){
              "ctp_tot_probable" = "deathProbable", "abb" = "state", "ctp_new_deaths" = "deathIncrease")) %>%
     inner_join(states, by = "abb") %>% 
     arrange(name,date) %>% 
-    filter(date >= "2020-03-07") %>% 
+    filter(date >= "2020-02-01") %>% 
     filter(date <= "2021-03-07")
   return(df)
 }
@@ -76,7 +76,7 @@ cdc_cases <- function(states, cutoff_month){
     mutate(tot_cases = as.numeric(tot_cases), new_case = as.numeric(new_case), date = as_date(date)) %>%
     rename("cdc_new_cases" = "new_case", "cdc_tot_cases" = "tot_cases") %>%
     arrange(name,date) %>% 
-    filter(date >= "2020-03-07") %>% 
+    filter(date >= "2020-02-01") %>% 
     filter(date <= "2021-03-07")
   return(df)
 }
@@ -88,21 +88,39 @@ nchs_old <- function(states, cutoff_month){
     read_csv(file = glue("data/nchs_as_of_{date}.csv", date = .x))
   })
   # load display this as a list 
-  data_list <- map2(data_list, dates, ~{
-    date_names <- glue("nchs_{date}", date = .y)
+  data_list <- map(data_list, ~{
     .x %>% rename("data_as_of" = "Data as of", "date" = "End Week", 
-                  !!date_names := "COVID-19 Deaths", "name" = "State") %>% 
-      select(date, name, !!date_names) %>% 
-      mutate(date = as_date(date, format = "%m/%d/%Y")) %>% 
+                  "nchs_new_deaths" = "COVID-19 Deaths", 
+                  "name" = "State") %>% 
+      select(date, data_as_of, name, nchs_new_deaths) %>% 
+      mutate(date = as_date(date, format = "%m/%d/%Y"), 
+             data_as_of = as_date(data_as_of, format = "%m/%d/%Y")) %>%
       group_by(name) %>% 
-      mutate(across(starts_with("nchs"), ~cumsum(.x), .names = "{.col}_tot_deaths")) %>% 
-      rename_with(~glue("{colnames}_new_deaths", colnames = .x), .cols = !ends_with("tot_deaths") & starts_with("nchs")) 
+      mutate(nchs_tot_deaths = cumsum(replace_na(nchs_new_deaths,0)))
   })
+
+  final_df <- reduce(data_list, full_join) %>% inner_join(states, by = "name") %>% ungroup()
+  
+  
+  
+  #data_list <- map2(data_list, dates, ~{
+  #  date_names <- glue("nchs_{date}", date = .y)
+  #  .x %>% rename("data_as_of" = "Data as of", "date" = "End Week", 
+  #                !!date_names := "COVID-19 Deaths", "name" = "State") %>% 
+  #    select(date, name, !!date_names) %>% 
+  #    mutate(date = as_date(date, format = "%m/%d/%Y")) %>% 
+  #    group_by(name) %>% 
+  #    mutate(across(starts_with("nchs"), ~cumsum(.x), .names = "{.col}_tot_deaths")) %>% 
+  #    rename_with(~glue("{colnames}_new_deaths", colnames = .x), .cols = !ends_with("tot_deaths") & starts_with("nchs")) 
+  #})
   # combine everything 
-  final_df <- reduce(data_list, full_join, by = c("date", "name")) %>% 
-    inner_join(states, by = c("name"))
+  #final_df <- reduce(data_list, full_join, by = c("date", "name")) %>% 
+  #  inner_join(states, by = c("name"))
   return(final_df)
+  
+  
 }
+
 
 # national data for cdc
 national_ctp <- function(cutoff_month, ...){
