@@ -1,0 +1,62 @@
+---
+title: "Overall Plots"
+author: "Quang Nguyen"
+date: "4/19/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggsci)
+library(showtext)
+library(ggsci)
+library(patchwork)
+library(tidyverse)
+library(lubridate)
+library(zoo)
+library(scales)
+source("../R/data_loader_support.R")
+source("../R/airtable.R")
+source("../R/utils.R")
+font_add_google("Roboto", "roboto")
+showtext_auto()
+```
+
+```{r plot_national_comparison}
+nchs_rev <- load_data("nchs_old") %>% ungroup()
+nchs_new <- load_data("nchs") 
+nchs_new <- nchs_new %>% ungroup() %>% 
+  mutate(data_as_of = rep(Sys.Date(), nrow(nchs_new)))
+df <- dplyr::bind_rows(nchs_rev, nchs_new) 
+
+df <- df %>% group_by(date, data_as_of) %>% summarise(nchs_tot_deaths = sum(nchs_tot_deaths, na.rm = TRUE))
+plots <- ggplot(df, aes(x = date, y = nchs_tot_deaths, col = as.factor(data_as_of))) + 
+  geom_line(size = 1.1, show.legend = FALSE) + geom_point(size = 0, pch = 15) +
+  theme_peter(base_size = 16) + 
+  scale_color_manual(values = c("#6e2f1f", "#ffad4a", "#012656", "#575aad")) + 
+  labs(x = "Date", y = "Total Deaths") + 
+  scale_y_continuous(labels = comma) + 
+  labs(col = "NCHS revision date", x = "Date", y = "Cumulative Deaths by Week",
+        caption = "Source: National Center of Health Statistics", 
+       title = toupper("Comparing NCHS Weekly Deaths from COVID-19 across different revisions"),
+       subtitle = "February 1st, 2020 - March 7th, 2021") +
+  theme(legend.position = "bottom", legend.box.spacing = unit(0.00001, "cm"),
+        legend.justification = "center",
+        plot.title = element_text(face = "bold", size = 20)) +
+  guides(colour = guide_legend(override.aes = list(size = 4)))
+ggsave(plots, filename = "comparing_nchs_revisions.png", dpi = 300, width = 5, height = 4)
+
+```
+
+
+```{r plot_national}
+
+types <- c("cdc", "nchs")
+df_list <- map(types, load_data)
+df <- reduce(df_list, full_join, by = c("date", "name", "abb"))
+
+
+
+```
+
