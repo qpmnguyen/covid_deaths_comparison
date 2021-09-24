@@ -7,9 +7,9 @@ library(gt)
 
 
 # wrapper function for loading data 
-load_data <- function(type = c("nchs", "ctp", "cdc", "cdc_cases", "nchs_old"), cutoff_month = 3){
+load_data <- function(type = c("nchs", "ctp", "cdc", "cdc_cases", "nchs_old", "nchs_march"), cutoff_month = 3){
   type <- match.arg(type)
-  states <- data.frame(abb = c(state.abb, "DC"), name = c(state.name, "Washington DC"))
+  states <- data.frame(abb = c(state.abb, "DC"), name = c(state.name, "District of Columbia"))
   df <- do.call(type, args = list(states = states, cutoff_month=cutoff_month), envir = environment())
   return(df)
 }
@@ -32,6 +32,39 @@ nchs <- function(states, cutoff_month){
     inner_join(states, by = "name") %>% ungroup()
   return(df)
 }
+
+nchs_march <- function(states, cutoff_month){
+  df <- read_csv("data/nchs_as_of_2021_03_17.csv")
+  df <- df %>% rename("date" = "Week Ending Date", "data_as_of" = "Data as of", 
+                "name" = "State", "nchs_new_deaths" = "COVID-19 Deaths") %>%
+    select(data_as_of, date, name , nchs_new_deaths) %>% filter(name != "United States") %>%
+    mutate(data_as_of = as_date(data_as_of, format = "%m/%d/%Y"), 
+           date = as_date(date, format = "%m/%d/%Y"))  %>% 
+    group_by(name) %>% 
+    mutate(nchs_tot_deaths = cumsum(replace_na(nchs_new_deaths,0))) %>% 
+    arrange(name, date) %>% 
+    filter(date >= "2020-02-01") %>%
+    filter(date <= "2021-03-07") %>% 
+    inner_join(states, by = "name") %>% ungroup()
+  return(df)
+}
+
+nchs_march_nat <- function(states, cutoff_month){
+  df <- read_csv(file = "data/nchs_as_of_2021_03_17.csv")
+  df <- df %>% rename("date" = "Week Ending Date", "data_as_of" = "Data as of", 
+                      "name" = "State", "nchs_new_deaths" = "COVID-19 Deaths") %>%
+    select(data_as_of, date, name , nchs_new_deaths) %>% 
+    filter(name == "United States") %>%
+    mutate(data_as_of = as_date(data_as_of, format = "%m/%d/%Y"), 
+           date = as_date(date, format = "%m/%d/%Y"))  %>% 
+    group_by(name) %>% 
+    mutate(nchs_tot_deaths = cumsum(replace_na(nchs_new_deaths,0))) %>% 
+    arrange(name, date) %>% 
+    filter(date >= "2020-02-01") %>%
+    filter(date <= "2021-03-07") %>% ungroup()
+  return(df)
+}
+
 
 # function for loading cdc data  
 cdc <- function(states, cutoff_month){
@@ -73,7 +106,8 @@ cdc_cases <- function(states, cutoff_month){
   )
   df <- df %>% as_tibble() %>% rename(c("date" = "submission_date", "abb" = "state")) %>%
     select(date, abb, tot_cases, new_case) %>% inner_join(states, by = "abb") %>%
-    mutate(tot_cases = as.numeric(tot_cases), new_case = as.numeric(new_case), date = as_date(date)) %>%
+    mutate(tot_cases = as.numeric(tot_cases), 
+           new_case = as.numeric(new_case), date = as_date(date)) %>%
     rename("cdc_new_cases" = "new_case", "cdc_tot_cases" = "tot_cases") %>%
     arrange(name,date) %>% 
     filter(date >= "2020-02-01") %>% 

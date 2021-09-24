@@ -36,7 +36,7 @@ showtext_auto()
 
 ```{r, echo=FALSE, message=FALSE, cache=TRUE, cache.extra = Sys.Date()}
 
-types <- c("ctp", "nchs", "cdc", "cdc_cases")
+types <- c("ctp", "nchs_march", "cdc", "cdc_cases")
 df_list <- vector(mode = "list", length = length(types))
 for (i in 1:length(types)){
   df_list[[i]] <- load_data(type = types[i])

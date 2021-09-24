@@ -4,9 +4,9 @@ author: "Quang Nguyen"
 date: "4/19/2021"
 output: pdf_document
 ---
-
+# Setup
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message=FALSE)
 library(tidyverse)
 library(ggsci)
 library(showtext)
@@ -16,23 +16,36 @@ library(tidyverse)
 library(lubridate)
 library(zoo)
 library(scales)
+library(extrafont)
+library(gridExtra)
+library(png)
+library(grid)
 source("../R/data_loader_support.R")
 source("../R/airtable.R")
 source("../R/utils.R")
-font_add_google("Roboto", "roboto")
-showtext_auto()
+
+logo <- readPNG(source = "logo.png")
+loadfonts(device = "win", quiet = TRUE)
+
+
+states <- data.frame(abb = c(state.abb, "DC"), name = c(state.name, "District of Columbia"))
 ```
 
+# national different revision comparison
 ```{r plot_national_comparison}
 nchs_rev <- load_data("nchs_old") %>% ungroup()
-nchs_new <- load_data("nchs") 
-nchs_new <- nchs_new %>% ungroup() %>% 
-  mutate(data_as_of = rep(Sys.Date(), nrow(nchs_new)))
+nchs_new <- load_data("nchs_march") 
+#nchs_new <- nchs_new %>% ungroup() %>% 
+#  mutate(data_as_of = rep(Sys.Date(), nrow(nchs_new)))
 df <- dplyr::bind_rows(nchs_rev, nchs_new) 
 
+
 df <- df %>% group_by(date, data_as_of) %>% summarise(nchs_tot_deaths = sum(nchs_tot_deaths, na.rm = TRUE))
+
 plots <- ggplot(df, aes(x = date, y = nchs_tot_deaths, col = as.factor(data_as_of))) + 
-  geom_line(size = 1.1, show.legend = FALSE) + geom_point(size = 0, pch = 15) +
+  geom_line(size = 1.1, aes(alpha = as.factor(data_as_of)), show.legend = FALSE) + 
+  geom_point(size = 0, pch = 15) +
+  scale_alpha_manual(values = c(1,1,1,0.5)) + 
   theme_peter(base_size = 16) + 
   scale_color_manual(values = c("#6e2f1f", "#ffad4a", "#012656", "#575aad")) + 
   labs(x = "Date", y = "Total Deaths") + 
@@ -43,20 +56,458 @@ plots <- ggplot(df, aes(x = date, y = nchs_tot_deaths, col = as.factor(data_as_o
        subtitle = "February 1st, 2020 - March 7th, 2021") +
   theme(legend.position = "bottom", legend.box.spacing = unit(0.00001, "cm"),
         legend.justification = "center",
-        plot.title = element_text(face = "bold", size = 20)) +
+        plot.title = element_text(face = "bold", size = 20), 
+        text= element_text(family = "SF Pro Text")) +
   guides(colour = guide_legend(override.aes = list(size = 4)))
 ggsave(plots, filename = "comparing_nchs_revisions.png", dpi = 300, width = 5, height = 4)
+```
+# Sources and Test annotation
+## Data prep
+```{r data_prep, message=FALSE}
+library(googlesheets4)
+library(stringr)
+types <- c("cdc", "nchs_march", "nchs_old")
+cdc_data <- load_data("cdc")
+nchs_mar <- load_data("nchs_march")
+nchs_dec <- load_data("nchs_old") %>% filter(data_as_of == "2020-12-23")
+
+
+gs4_auth(email = "quangpnguyen@covidtracking.com")
+  sheet <- read_sheet("https://docs.google.com/spreadsheets/d/1UZ4s1RhGXBU8s2SZJ6OPvkD2TZA0PsggGrT3hESCT5s/edit#gid=655426328", 
+                      sheet = "Deaths Overview", range = "A:AI")
+names <- c(
+  "abb" = "State", "tot_test" = "Total Deaths Test", 
+  "conf_test" = "Confirmed Deaths Test", 
+  "prob_test" = "Probable Deaths Test", "tot_source" = "Total Deaths Source", 
+  "conf_source" = "Confirmed Deaths Source", "prob_source" = "Probable Deaths Source", 
+  "rev" = "Revising"
+)
+sheet <- sheet %>% select(c("State", "Total Deaths Test", "Confirmed Deaths Test", 
+                            "Probable Deaths Test", 
+                            "Total Deaths Source", "Confirmed Deaths Source", 
+                            "Probable Deaths Source", "Revising")) %>%
+  rename("abb" = "State", "tot_test" = "Total Deaths Test", 
+         "conf_test" = "Confirmed Deaths Test", 
+         "prob_test" = "Probable Deaths Test", "tot_source" = "Total Deaths Source", 
+         "conf_source" = "Confirmed Deaths Source", "prob_source" = "Probable Deaths Source", 
+         "rev" = "Revising")
+
+match_annotation <- function(month){
+  if (month == 3){
+    nchs_data <- nchs_mar
+  } else {
+    nchs_data <- nchs_dec
+  }
+  df <- left_join(nchs_data, cdc_data)
+  df <- left_join(df, sheet, by = "abb")
+  df <- df %>% select(date, name, abb, ends_with("tot_deaths"), tot_source, tot_test) 
+  df <- df %>% mutate(week = epiweek(date), year = year(date)) %>% 
+    filter(date == max(date))
+  df_plot <- df %>% mutate(diff = (nchs_tot_deaths - cdc_tot_deaths)/cdc_tot_deaths * 100) %>% 
+    mutate(status = case_when(
+      diff <= -5 ~ "NCHS Death Counts is lower than CDC Death Counts", 
+      diff >= 5 ~ "NCHS Death Counts is higher than CDC Death Counts", 
+      TRUE ~ "NCHS and CDC Death Counts are within 5% of one another"
+    )) %>% 
+    mutate(tot_source = case_when(
+      tot_source == "Other/Suspicious Deaths Source" ~ "Other Deaths Source",
+      TRUE ~ tot_source
+    )) %>% 
+    mutate(tot_test = case_when(
+      tot_test == "Test Not Required" ~ "Positive Test Not Required", 
+      tot_test == "Unclear Test Required" ~ "Unclear Which Test Required", 
+      tot_test == "Unclear Whether Test Required" ~ "Unclear Whether Positive Test Required", 
+      tot_test == "Viral RNA or Antigen Required" ~ "Positive Viral RNA or Antigen Required", 
+      tot_test == "Viral RNA Required" ~ "Positive Viral RNA Required", 
+      tot_test == "Antigen Required" ~ "Positive Antigen Required"
+    )) %>% 
+        mutate(col = case_when(
+      status == "NCHS Death Counts is lower than CDC Death Counts" ~ "#8cc7f4",
+      status == "NCHS Death Counts is higher than CDC Death Counts" ~ "#575aad",
+      status == "NCHS and CDC Death Counts are within 5% of one another" ~ "#9ca1a2"
+    )) %>% 
+    mutate(status = str_wrap(status, width = 40), 
+           tot_source = str_wrap(tot_source, width = 5), 
+           tot_test = str_wrap(tot_test, width = 25)) %>% 
+    mutate(freq = rep(1, nrow(df))) %>% group_by(tot_source) %>%
+    mutate(pos = cumsum(freq) - (0.5 * freq)) %>% ungroup() %>% 
+    group_by(tot_test) %>% mutate(pos_test = cumsum(freq) - (0.5 * freq))
+
+  return(df_plot)
+}
+```
+
+## Plot sources 
+```{r plot_sources_test}
+#fill = str_wrap(status, 40)
+source_plot <- function(df, month){
+  if (month == 3){
+    title <- "March 2021 NCHS Revision"
+  } else {
+    title <- "December 2020 NCHS Revision"
+  }
+  color <- df$col
+  names(color) <- df$status
+  ggplot(df,aes(x = tot_source, y = freq, fill = status)) + 
+    geom_col(col = "black") +
+    geom_text(aes(label = abb), position = position_stack(vjust = 0.5), 
+              col = "white", fontface = "bold") +
+    #scale_fill_manual(values = color) +
+    scale_fill_manual(values = c("#9ca1a2", "#575aad", "#8cc7f4")) + 
+    scale_x_discrete(labels = label_wrap(30)) +
+    theme_peter() + 
+    theme(legend.title = element_blank(), 
+          legend.box = "horizontal", legend.position = "bottom",
+          plot.subtitle = element_text(size = 12, face = "bold"),
+          legend.text = element_text(size = 11, lineheight = 1.3),
+          legend.box.spacing = unit(0.01,"cm"), 
+          legend.key.height = unit(0.3, "cm"), 
+          legend.margin = margin(b = 3),
+          axis.text.x = element_text(size = 12, lineheight = 0.7), 
+          axis.title.y = element_text(size = 12),
+          axis.title.x = element_blank(),
+          axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          legend.box.margin  = margin(10,10,10,10),
+          text = element_text(size = 10, family = "SF Pro Text"),
+          plot.caption = element_text(hjust = 0, color = "#9ca1a2")) +
+    labs(y = "Number of States", 
+        subtitle = toupper(title))
+}
+
+
+source_march <- match_annotation(3)
+source_dec <- match_annotation(12)
+march <- source_plot(source_march,3) + theme(axis.title.y = element_blank())
+december <- source_plot(source_dec,12)
+
+combo <- december + march + plot_layout(guides = "collect") + 
+  plot_annotation(caption = "Source: CDC Data Tracker and NCHS Provisional Death Counts", 
+                  title = toupper("How do states compile their death counts?")) &
+  theme(legend.box = "horizontal", legend.position = "bottom", 
+        plot.title = element_text(size = 20, face = "bold", family = "SF Pro Text"),
+        plot.caption = element_text(hjust = 0, color = "#9ca1a2")) &
+  scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 14))
+
+
+
+
+ggsave(combo, filename = "state_counts_death_sources.png", dpi = 300, width = 13, height = 8)
+
+```
+
+## Plot test
+```{r}
+
+test_plot <- function(df, month){
+  if (month == 3){
+    title <- "March 2021 NCHS Revision"
+  } else {
+    title <- "December 2020 NCHS Revision"
+  }
+  ggplot(df, aes(x = tot_test, y = freq, label = abb, 
+                               fill = str_wrap(status,40))) + 
+    geom_col(col = "black") +
+    geom_text(aes(label = abb), position = position_stack(vjust = 0.5), 
+          col = "white", fontface = "bold") +
+    scale_fill_manual(values = c("#9ca1a2", "#575aad", "#8cc7f4")) + 
+    theme_peter() +
+    theme(legend.title = element_blank(), 
+      plot.subtitle = element_text(size = 12, face = "bold"),
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.text = element_text(size = 11, lineheight = 1.3),
+      legend.box.spacing = unit(0.0001,"cm"), 
+      legend.key.height = unit(0.2, "cm"), 
+      legend.margin = margin(b = 3),
+      axis.text.x = element_text(lineheight = 0.7), 
+      axis.title.x = element_blank(),
+      legend.box.margin  = margin(10,10,10,10),
+      text = element_text(family = "SF Pro Text"),
+      plot.caption = element_text(hjust = 0, color = "#9ca1a2")) +
+  labs(y = "Number of States", 
+       source = "NCHS and CDC Data Tracker", 
+       subtitle = toupper(title))
+}
+
+march <- test_plot(source_march, 3) + theme(axis.title.y = element_blank())
+december <- test_plot(source_dec,12)
+
+combo_test <- december + march + plot_layout(guides = "collect") + 
+  plot_annotation(caption = "Source: CDC Data Tracker and NCHS Provisional Death Counts", 
+                  title = toupper("Are states requiring a positive test to count COVID-19 deaths?")) &
+  theme(legend.box = "horizontal", legend.position = "bottom", 
+        plot.title = element_text(size = 20, face = "bold", family = "SF Pro Text"),
+        plot.caption = element_text(hjust = 0, color = "#9ca1a2")) &
+  scale_x_discrete(labels = function(x) stringr::str_wrap(x, width = 14))
+ggsave(combo_test, filename = "state_counts_death_tests.png", dpi = 300, width = 13, height = 8)
+
+```
+
+# Daily cdc vs nchs daily counts stratified by Dec and March
+
+## Old cdc data  
+```{r cdc_data_old, message=FALSE}
+
+dates <- c("2021_03_17", "2020_12_23")
+load_dat <- function(type, date){
+  df <- read_csv(file = glue("data/{type}_as_of_{date}.csv", type = type, date = date))
+  return(df)
+}
+
+cdc_data <- map(dates, ~load_dat("cdc", .x))
+
+cdc_data <- map2(dates, cdc_data, ~{
+  date <- str_replace_all(.x, "_", "/")
+  date <- as_date(date, format = "%Y/%m/%d")
+  tibble(data_as_of = date, .y)
+})
+
+cdc_data <- map(cdc_data, ~{
+  .x %>% rename(c("date" = "submission_date", "abb" = "state")) %>% 
+  select(date, abb, data_as_of, tot_death, new_death) %>% 
+  inner_join(states, by = "abb") %>% 
+  rename("cdc_tot_deaths" = "tot_death", "cdc_new_deaths" = "new_death") %>% 
+  arrange(name, date) %>% mutate(date = as_date(date, format = "%m/%d/%Y")) %>% 
+  select(data_as_of, date, abb, name, cdc_tot_deaths, cdc_new_deaths) %>% 
+  group_by(data_as_of, date, abb, name)
+})
+
+cdc_data <- reduce(cdc_data, bind_rows)
+
+
+cdc_data <- cdc_data %>% ungroup() %>% mutate(year = year(date), week = epiweek(date)) %>%
+  rename("tot_deaths" = "cdc_tot_deaths", "new_deaths" = "cdc_new_deaths") %>% 
+  group_by(week,year, data_as_of) %>% mutate(week_ending_date = max(date)) %>% 
+  group_by(data_as_of, week_ending_date) %>% summarise(tot_deaths = sum(tot_deaths), new_deaths = sum(new_deaths)) %>% 
+  rename("date" = "week_ending_date") %>% mutate(source = "cdc") %>% 
+  group_by(data_as_of, date) %>% 
+  mutate(new_deaths = rollapplyr(new_deaths, mean, na.rm = T, 
+                                 partial = T, width = 14, fill = NA, align = "right")) %>% 
+  filter(date >= "2020-02-01") 
+
+```
+
+## New CDC data
+```{r cdc_data_new, message=FALSE}
+cdc_data <- load_data('cdc')
+cdc_data <- cdc_data %>% ungroup() %>% 
+  mutate(year = year(date), week = epiweek(date)) %>%
+  rename("tot_deaths" = "cdc_tot_deaths", "new_deaths" = "cdc_new_deaths") %>% 
+  group_by(week,year) %>% mutate(week_ending_date = max(date)) 
+
+cdc_tot_deaths <- cdc_data %>% filter(date == week_ending_date) %>% 
+  group_by(week_ending_date) %>% 
+  summarise(tot_deaths = sum(tot_deaths, na.rm = T)) %>% 
+  rename("date" = "week_ending_date")
+
+cdc_data <- cdc_data %>% group_by(week_ending_date) %>% 
+  summarise(new_deaths = sum(new_deaths)) %>% 
+  rename("date" = "week_ending_date") %>% mutate(source = "cdc") %>% 
+  mutate(new_deaths = rollapplyr(new_deaths, mean, na.rm = T, 
+                                 partial = T, width = 7, fill = NA, 
+                                 align = "center")) %>% 
+  filter(date >= "2020-02-01") 
+
+cdc_data <- left_join(cdc_data, cdc_tot_deaths)
+  
+
+```
+
+## NCHS data
+```{r nchs_data_all, message=FALSE, warning=FALSE}
+data_types <- c("nchs_march", "nchs_old")
+df_list <- map(data_types, load_data)
+nchs_data <- reduce(df_list, bind_rows)
+nchs_data <- nchs_data %>% mutate(source = "nchs") %>% 
+  rename("new_deaths" = "nchs_new_deaths", "tot_deaths" = "nchs_tot_deaths") %>% 
+  group_by(data_as_of, date, source) %>% 
+  summarise(new_deaths = sum(new_deaths,na.rm = T), 
+            tot_deaths = sum(tot_deaths, na.rm = T)) %>%
+  filter(month(data_as_of) %in% c(3, 12)) %>% 
+  mutate(new_deaths = rollapplyr(new_deaths, mean, na.rm = T, partial = T, fill = NA, 
+                                 width = 7, align = "center"))
+```
+
+## Combine and plot
+```{r plotting}
+df <- bind_rows(nchs_data, cdc_data)
+df <- df %>% mutate(source = toupper(source))
+generate_nchs_cdc <- function(month){
+  plt_df <- df %>% filter(is.na(data_as_of) | month(data_as_of) == month)
+  if (month == 3){
+    title <- "March 2021 NCHS Revision"
+  } else {
+    title <- "December 2020 NCHS Revision"
+  }
+  ggplot(plt_df, aes(x = date, y = new_deaths, col = source)) + 
+    geom_line(size = 1.25, alpha = 0.8) + 
+    theme_peter(base_family = "SF Pro Text") + 
+    labs(col = "Data Source", y = "7-week rolling average weekly new deaths",
+         x = "Week ending date", 
+         subtitle = title) + 
+    theme(plot.subtitle = element_text(face = "bold")) + 
+    scale_color_manual(values = c("#575aad", "#8cc7f4"))
+}
+
+p1_lineplot <- generate_nchs_cdc(12)
+p2_lineplot <- generate_nchs_cdc(3) + 
+  theme(axis.title.y = element_blank())
+
+combo_lineplot <- p1_lineplot + p2_lineplot + plot_layout(guides = "collect") + 
+  plot_annotation(caption = "Source: CDC Data Tracker and NCHS Provisional Death Counts",
+                  title = toupper("Weekly new deaths comparison between NCHS and CDC")) &
+  theme(plot.caption = element_text(hjust = 0, color = "#9ca1a2"), 
+        plot.title = element_text(face = "bold"), 
+        legend.position = "bottom", 
+        plot.subtitle = element_text(hjust = 0.5))
+
+ggsave(combo_lineplot, filename = "nchs_cdc_daily_topline.png", dpi = 300, width = 8, height = 6)
+
+```
+
+## Diff plots   
+```{r}
+
+generate_diff_plots <- function(month){
+  plot_df <- df %>% filter(month(data_as_of) == month | is.na(data_as_of))
+  plot_df <- plot_df %>% 
+    pivot_wider(id_cols = date, names_from = source, values_from = new_deaths) %>% 
+    mutate(diff = CDC - NCHS, diff_perc = round((diff/CDC) * 100, 2)) %>% 
+    filter(!is.na(diff)) %>% mutate(diff_perc = replace_na(diff_perc, 0)) %>% 
+    mutate(status = if_else(diff >= 0, "CDC has higher counts", "CDC has lower counts"))
+  if (month == 3){
+    subtitle <- "March 2021 Revision"
+    center <- as_date("2020-08-15")
+  } else {
+    subtitle <- "December 2021 Revision"
+    center <- as_date("2020-07-15")
+  }
+  plt <- ggplot(plot_df, aes(y = diff_perc, x = date, fill = status)) + 
+    geom_bar(stat = "identity", col = "black") +
+    annotate("text", x = center, y = 50, label = "bold('CDC has higher counts')",
+             family = "SF Pro Text", parse = TRUE) +
+    annotate("text", x = center, y = -50, label = "bold('CDC has lower counts')", 
+             family = "SF Pro Text", parse = TRUE) +
+    theme_peter(base_family = "SF Pro Text") + 
+    scale_fill_manual(values = c("#575aad", "#8cc7f4")) + 
+    labs(y = "Percentage Difference", x = "Week Ending Date") + 
+    theme(legend.position = "none")
+  return(plt)
+}
+
+p1_boxplot <- generate_diff_plots(12)
+p2_boxplot <- generate_diff_plots(3) + theme(axis.title.y = element_blank())
+
+combo_boxplot <- p1_boxplot + p2_boxplot  + plot_annotation(
+  caption = "Source: CDC Data Tracker and NCHS Provisional Death Counts",
+  title = toupper("Percentage difference in weekly new deaths between NCHS and CDC")) &
+  theme(plot.caption = element_text(hjust = 0, color = "#9ca1a2"), 
+        plot.title = element_text(size = 16, face = "bold"))
+
+ggsave(combo_boxplot, filename = "diff_daily_national.png", dpi = 300, width = 10, height = 6)
+
+```
+
+## Combo combine plots 
+```{r combo_combo, warning=FALSE, message=FALSE}
+
+combined_linebox <- combo_lineplot/combo_boxplot + plot_annotation(
+  caption = "Source: CDC Data Tracker and NCHS Provisional Death Counts",
+  title = toupper("Comparison of weekly new deaths between NCHS and CDC")) &
+  theme(plot.caption = element_text(hjust = 0, color = "#9ca1a2"), 
+        plot.title = element_text(size = 16, face = "bold"))
+
+ggsave(combined_linebox, filename = "combine_line_diff.png", dpi = 300, width = 10, height = 8)
 
 ```
 
 
-```{r plot_national}
 
-types <- c("cdc", "nchs")
-df_list <- map(types, load_data)
-df <- reduce(df_list, full_join, by = c("date", "name", "abb"))
+# Texas  
 
+Plot of Texas weekly fatality data comparing NCHS and CDC before and after the supposed switch on July 30th, 2020  
 
+## Data prep 
+```{r texas, message=FALSE, warning=FALSE}
+
+nchs_data <- load_data("nchs_march")
+cdc_data <- load_data("cdc")
+
+nchs_data <- nchs_data %>% mutate(source = "nchs") %>% 
+  rename("new_deaths" = "nchs_new_deaths", "tot_deaths" = "nchs_tot_deaths") %>%
+  filter(abb == "TX") %>% 
+  mutate(new_deaths = rollapplyr(new_deaths, mean, na.rm = T, partial = T, fill = NA, 
+                                 width = 7, align = "center"))
+
+cdc_data <- cdc_data %>% ungroup() %>% filter(abb == "TX") %>% 
+  rename("new_deaths" = "cdc_new_deaths", "tot_deaths" = "cdc_tot_deaths") %>%
+  mutate(year = year(date), week = epiweek(date)) %>% 
+  group_by(week, year) %>% mutate(week_ending_date = max(date)) %>% ungroup()
+
+cdc_tot_deaths <- cdc_data %>% filter(date == week_ending_date) %>% 
+  ungroup() %>% 
+  select(date, tot_deaths)
+
+cdc_data <- cdc_data %>% ungroup() %>% group_by(week_ending_date) %>% 
+  summarise(new_deaths = sum(new_deaths)) %>% 
+  rename("date" = "week_ending_date") %>% mutate(source = "cdc") %>% 
+  mutate(new_deaths = rollapplyr(new_deaths, mean, na.rm = T, 
+                                 partial = T, width = 7, fill = NA, 
+                                 align = "center")) %>% 
+  filter(date >= "2020-02-01") 
+
+cdc_data <- left_join(cdc_data, cdc_tot_deaths)
+
+df <- bind_rows(cdc_data, nchs_data) %>% select(-c(data_as_of, name, abb))
+```
+
+## Plots  
+```{r texas-plot, warning=FALSE, message=FALSE}
+ggplot(df, aes(x = date, y = tot_deaths, col = source)) + geom_line()
 
 ```
+# Excess deaths  
+## Data wrangling
+```{r}
+excess <- read.csv(file = "data/excess_deaths_05_20_2021.csv")
+pop <- read.csv(file = "data/pop_estimate_census_2019.csv")
+pop <- pop %>% select(NAME, POPESTIMATE2019) %>% rename("name" = "NAME", 
+                                                        "pop" = "POPESTIMATE2019")
+
+excess <- excess %>% filter(Year == 2020, Outcome == "All causes, excluding COVID-19", 
+                            Type == "Predicted (weighted)") %>% 
+  select(State, Total.Excess.Lower.Estimate.in.2020, Total.Excess.Higher.Estimate.in.2020) %>% 
+  rename("name" = "State", "excess_lower" = "Total.Excess.Lower.Estimate.in.2020", 
+         "excess_upper" = "Total.Excess.Higher.Estimate.in.2020") %>% 
+  distinct() %>% inner_join(states)
+
+df_excess <- left_join(excess, sheet) %>% 
+  mutate(mean = (excess_upper + excess_lower)/2) %>% arrange(mean) %>% 
+  mutate(tot_source = recode(tot_source, 
+                             "Other/Suspicious Deaths Source" = "Other Deaths Source")) %>% 
+  left_join(pop) %>% 
+  mutate(excess_capita = (excess_lower / pop)*100000)
+
+excess_plot <- ggplot(df_excess, aes(x = reorder(name, excess_capita), y = excess_capita, 
+                                     fill = tot_source)) + 
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("#575aad", "#8cc7f4", "#ffad4a", "#9ca1a2")) + 
+  #geom_linerange(aes(ymin = excess_lower, ymax = excess_upper)) + 
+  coord_flip() + 
+  theme_peter(base_family = "SF Pro Text") + 
+  labs(y = "All cause excess mortality (excluding COVID-19) per 100,000", fill = "Death Sources", 
+       title = toupper("Death Sources by Excess All-cause Mortality"),
+       caption = "Source: NCHS Excess Deaths Associated with COVID-19") + 
+  theme(axis.title.y = element_blank(), 
+        plot.title = element_text(size = 15, face = "bold", hjust = 0))  
+
+
+ggsave(excess_plot, filename = "excess_plots.png", dpi = 300, width = 8, height = 7)
+```
+
+
+
+
+
 
